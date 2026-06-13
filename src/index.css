@@ -1,0 +1,37 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  outline: none;
+  border: 0.5px solid #E2E8F0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: #1E293B;
+  background: #fff;
+  transition: border-color 0.15s;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: #003366;
+  box-shadow: 0 0 0 2px rgba(0, 51, 102, 0.08);
+}
+
+button {
+  font: inherit;
+}

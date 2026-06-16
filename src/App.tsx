@@ -1805,7 +1805,7 @@ const SECTION_LABELS = {
   usuarios:"Usuarios",params:"Configuración",auditoria:"Auditoría",
 };
 
-function MainLayout({sidebarOpen=false,setSidebarOpen=(_v?: boolean)=>{}}){
+function MainLayout({sidebarOpen=false,setSidebarOpen=()=>{}}:{sidebarOpen?: boolean; setSidebarOpen?: any}){
   const {session,effectiveRole,misActivos,sysNotifs,misNotificaciones}=useApp();
   const defaultTab=useMemo(()=>{
     if(hasLevel(effectiveRole,"Admin")) return "reportes";

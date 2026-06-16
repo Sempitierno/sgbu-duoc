@@ -6,8 +6,18 @@ import {
   BookOpen, CalendarClock, AlertCircle, Filter, Package,
   ClipboardList, RefreshCw, RotateCcw, TrendingUp, AlertTriangle,
   BarChart3, Send, MessageSquare, BookCopy, UserCog,
-  Sliders, Eye, ShieldAlert, ChevronDown
+  Sliders, Eye, ShieldAlert, ChevronDown, Menu
 } from "lucide-react";
+
+function useIsMobile(bp = 768) {
+  const [m, setM] = useState(() => window.innerWidth < bp);
+  useEffect(() => {
+    const h = () => setM(window.innerWidth < bp);
+    window.addEventListener("resize", h);
+    return () => window.removeEventListener("resize", h);
+  }, [bp]);
+  return m;
+}
 
 type Book = {
   id: number;
@@ -413,7 +423,7 @@ function IconBtn({icon:Icon,color,bg,title,onClick,disabled=false}){
   );
 }
 function Card({children,style={}}){
-  return <div style={{background:"#fff",border:"0.5px solid #E2E8F0",borderRadius:12,overflow:"hidden",...style}}>{children}</div>;
+  return <div style={{background:"#fff",border:"0.5px solid #E2E8F0",borderRadius:12,...style}}>{children}</div>;
 }
 function SectionTitle({icon:Icon,label,count=null}){
   return(
@@ -527,33 +537,39 @@ function RoleEmulator(){
 }
 
 // ─── NAVBAR & SIDEBAR ────────────────────────────────────────
-function Navbar(){
+function Navbar({onToggleSidebar=()=>{}}){
   const {session,logout}=useApp();
+  const isMobile=useIsMobile();
   return(
-    <nav style={{background:"#003366",color:"#fff",padding:"0 20px",height:56,display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:50}}>
-      <div style={{display:"flex",alignItems:"center",gap:12}}>
+    <nav style={{background:"#003366",color:"#fff",padding:"0 16px",height:56,display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:50}}>
+      <div style={{display:"flex",alignItems:"center",gap:isMobile?8:12}}>
+        {session&&isMobile&&(
+          <button onClick={onToggleSidebar} style={{background:"none",border:"none",cursor:"pointer",color:"#fff",display:"flex",alignItems:"center",padding:"4px 2px",flexShrink:0}}>
+            <Menu size={20} color="#fff"/>
+          </button>
+        )}
         <DuocLogoSVG height={28}/>
-        <div style={{width:1,height:24,background:"#ffffff20"}}/>
-        <div style={{display:"flex",alignItems:"center",gap:6}}>
-          <Library size={15} color="#93C5FD"/>
-          <span style={{fontSize:13,color:"#93C5FD"}}>Sistema de Gestión Bibliotecaria</span>
-        </div>
+        {!isMobile&&<>
+          <div style={{width:1,height:24,background:"#ffffff20"}}/>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <Library size={15} color="#93C5FD"/>
+            <span style={{fontSize:13,color:"#93C5FD"}}>Sistema de Gestión Bibliotecaria</span>
+          </div>
+        </>}
       </div>
       {session&&(
-        <div style={{display:"flex",alignItems:"center",gap:12}}>
-          <RoleEmulator/>
+        <div style={{display:"flex",alignItems:"center",gap:isMobile?8:12}}>
+          {!isMobile&&<RoleEmulator/>}
           <NotifBell/>
-          <div style={{display:"flex",alignItems:"center",gap:8}}>
-            <div style={{width:30,height:30,borderRadius:"50%",background:"#1D4ED8",display:"flex",alignItems:"center",justifyContent:"center"}}>
-              <User size={14} color="#fff"/>
-            </div>
+          {!isMobile&&<div style={{display:"flex",alignItems:"center",gap:8}}>
+            <div style={{width:30,height:30,borderRadius:"50%",background:"#1D4ED8",display:"flex",alignItems:"center",justifyContent:"center"}}><User size={14} color="#fff"/></div>
             <div style={{lineHeight:1.2}}>
               <p style={{margin:0,fontSize:12,fontWeight:500}}>{session.nombre}</p>
               <p style={{margin:0,fontSize:10,color:"#93C5FD"}}>{session.rol}</p>
             </div>
-          </div>
+          </div>}
           <button onClick={logout} style={{background:"transparent",border:"1px solid #ffffff25",borderRadius:6,padding:"4px 10px",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:11}}>
-            <LogOut size={12}/> Salir
+            <LogOut size={12}/>{!isMobile&&" Salir"}
           </button>
         </div>
       )}
@@ -561,8 +577,9 @@ function Navbar(){
   );
 }
 
-function Sidebar({activeTab,setActiveTab,badge={}}){
+function Sidebar({activeTab,setActiveTab,badge={},open=false,onClose=()=>{}}){
   const {effectiveRole}=useApp();
+  const isMobile=useIsMobile();
   const items=useMemo(()=>{
     const all=[];
     if(hasLevel(effectiveRole,"Usuario")){
@@ -585,21 +602,27 @@ function Sidebar({activeTab,setActiveTab,badge={}}){
     return all;
   },[effectiveRole]);
 
+  const desktopStyle = {width:208,minHeight:"calc(100vh - 56px)",background:"#F8FAFC",borderRight:"0.5px solid #E2E8F0",padding:"12px 0",flexShrink:0};
+  const mobileStyle  = {position:"fixed" as const,top:56,left:0,width:220,bottom:0,background:"#F8FAFC",borderRight:"0.5px solid #E2E8F0",padding:"12px 0",zIndex:100,overflowY:"auto" as const,transform:open?"translateX(0)":"translateX(-100%)",transition:"transform 0.25s ease",boxShadow:open?"4px 0 24px rgba(0,0,0,0.18)":"none"};
+
   return(
-    <aside style={{width:208,minHeight:"calc(100vh - 56px)",background:"#F8FAFC",borderRight:"0.5px solid #E2E8F0",padding:"12px 0",flexShrink:0}}>
-      <p style={{margin:"0 16px 10px",fontSize:10,color:"#CBD5E1",textTransform:"uppercase",letterSpacing:1.2}}>Navegación</p>
-      {items.map(({id,label,icon:Icon,divider})=>{
-        if(divider) return <div key={id} style={{height:1,background:"#E2E8F0",margin:"8px 14px"}}/>;
-        const active=activeTab===id;
-        const cnt=badge[id]||0;
-        return(
-          <button key={id} onClick={()=>setActiveTab(id)} style={{width:"100%",background:active?"#EFF6FF":"transparent",border:"none",borderLeft:active?"3px solid #003366":"3px solid transparent",padding:"10px 14px",textAlign:"left",display:"flex",alignItems:"center",gap:9,color:active?"#003366":"#64748B",fontWeight:active?500:400,fontSize:13,cursor:"pointer"}}>
-            <Icon size={15}/><span style={{flex:1}}>{label}</span>
-            {cnt>0&&<span style={{background:"#EF4444",color:"#fff",fontSize:10,padding:"1px 6px",borderRadius:99,minWidth:18,textAlign:"center"}}>{cnt}</span>}
-          </button>
-        );
-      })}
-    </aside>
+    <>
+      {isMobile&&open&&<div onClick={onClose} style={{position:"fixed",inset:0,top:56,background:"rgba(0,0,0,0.4)",zIndex:99}}/>}
+      <aside style={isMobile?mobileStyle:desktopStyle}>
+        <p style={{margin:"0 16px 10px",fontSize:10,color:"#CBD5E1",textTransform:"uppercase",letterSpacing:1.2}}>Navegación</p>
+        {items.map(({id,label,icon:Icon,divider})=>{
+          if(divider) return <div key={id} style={{height:1,background:"#E2E8F0",margin:"8px 14px"}}/>;
+          const active=activeTab===id;
+          const cnt=badge[id]||0;
+          return(
+            <button key={id} onClick={()=>{setActiveTab(id);if(isMobile)onClose();}} style={{width:"100%",background:active?"#EFF6FF":"transparent",border:"none",borderLeft:active?"3px solid #003366":"3px solid transparent",padding:"10px 14px",textAlign:"left",display:"flex",alignItems:"center",gap:9,color:active?"#003366":"#64748B",fontWeight:active?500:400,fontSize:13,cursor:"pointer"}}>
+              <Icon size={15}/><span style={{flex:1}}>{label}</span>
+              {cnt>0&&<span style={{background:"#EF4444",color:"#fff",fontSize:10,padding:"1px 6px",borderRadius:99,minWidth:18,textAlign:"center"}}>{cnt}</span>}
+            </button>
+          );
+        })}
+      </aside>
+    </>
   );
 }
 
@@ -828,6 +851,7 @@ function ConfirmDevolucionModal({prestamo,onConfirm,onCancel}){
 
 function BookDetailModal({book,userId,onClose}){
   const {misActivos,registrarPrestamo,params}=useApp();
+  const isMobile=useIsMobile();
   const [pending,setPending]=useState(false);
   const misIds=misActivos(userId).map(p=>p.bookId);
   const yaMio=misIds.includes(book.id);
@@ -852,11 +876,11 @@ function BookDetailModal({book,userId,onClose}){
         </div>
 
         {/* Split View */}
-        <div style={{display:"grid",gridTemplateColumns:"220px 1fr",flex:1,overflow:"hidden"}}>
+        <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"220px 1fr",flex:1,overflow:"hidden"}}>
 
           {/* Portada */}
-          <div style={{background:"#0F172A",position:"relative",overflow:"hidden",flexShrink:0}}>
-            <img src={book.portada} alt={book.titulo} style={{width:"100%",height:"100%",objectFit:"cover",display:"block",opacity:0.9}} onError={e=>{e.currentTarget.style.background="#1E293B";e.currentTarget.src="";}}/>
+          <div style={{background:"#0F172A",position:"relative",overflow:"hidden",flexShrink:0,minHeight:isMobile?200:undefined}}>
+            <img src={book.portada} alt={book.titulo} style={{width:"100%",height:isMobile?200:"100%",objectFit:"cover",display:"block",opacity:0.9}} onError={e=>{e.currentTarget.style.background="#1E293B";e.currentTarget.src="";}}/>
             <div style={{position:"absolute",inset:0,background:"linear-gradient(to top,rgba(0,0,0,0.6) 0%,transparent 50%)"}}/>
             <div style={{position:"absolute",top:12,left:12}}><Badge estado={book.estado}/></div>
           </div>
@@ -944,7 +968,7 @@ function CatalogoView({userId}){
     <div style={{padding:24}}>
       <CatalogFilters query={query} setQuery={setQuery} catFilter={catF} setCatFilter={setCatF} estadoFilter={estF} setEstadoFilter={setEstF}/>
       <p style={{margin:"0 0 14px",fontSize:13,color:"#94A3B8"}}>{filtered.length} libro(s) encontrado(s)</p>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(165px,1fr))",gap:16}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(145px,1fr))",gap:16}}>
         {filtered.map(book=>{
           const yaMio=misIds.includes(book.id);
           return(
@@ -1095,6 +1119,7 @@ function InventarioView(){
         </button>
       </div>
       <Card>
+        <div style={{overflowX:"auto"}}>
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
           <thead><tr style={{background:"#F8FAFC",borderBottom:"0.5px solid #E2E8F0"}}>
             {["Portada","Título / Autor","Categoría","Estado","Stock","Acciones"].map(h=>(
@@ -1125,6 +1150,7 @@ function InventarioView(){
             {filtered.length===0&&<tr><td colSpan={6} style={{padding:24,textAlign:"center",color:"#94A3B8"}}>Sin resultados</td></tr>}
           </tbody>
         </table>
+        </div>
       </Card>
       {modal!==null&&<BookModal initial={modal==="new"?null:modal} onClose={()=>setModal(null)} onSave={modal==="new"?addBook:updateBook}/>}
       {stockM&&<StockModal book={stockM} onClose={()=>setStockM(null)} onUpdate={updateStock}/>}
@@ -1145,6 +1171,7 @@ function InventarioView(){
 }
 
 function PrestamosView(){
+  const isMobile=useIsMobile();
   const {books,users,prestamos,registrarPrestamo,registrarDevolucion,params,addToast,aprobarRenovacion,rechazarRenovacion}=useApp();
   const [tab,setTab]=useState("activos");
   const [selUser,setSelUser]=useState("");
@@ -1197,7 +1224,7 @@ function PrestamosView(){
 
       {tab==="activos"&&(
         <>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:18,maxWidth:480}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(100px,1fr))",gap:12,marginBottom:18,maxWidth:480}}>
             {[["Activos",totalActivos,"#003366"],["A tiempo",totalOk,"#16A34A"],["En mora",totalMora,"#DC2626"]].map(([l,v,a])=>(
               <div key={l} style={{background:"#fff",borderRadius:10,border:"0.5px solid #E2E8F0",padding:"10px 14px",borderTop:`3px solid ${a}`}}>
                 <p style={{margin:"0 0 2px",fontSize:10,color:"#94A3B8",textTransform:"uppercase",letterSpacing:0.5}}>{l}</p>
@@ -1217,6 +1244,7 @@ function PrestamosView(){
             </div>
           </div>
           <Card>
+            <div style={{overflowX:"auto"}}>
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
               <thead><tr style={{background:"#F8FAFC",borderBottom:"0.5px solid #E2E8F0"}}>
                 {["Usuario","Libro","Fecha préstamo","Vencimiento","Estado","Acción"].map(h=>(
@@ -1271,6 +1299,7 @@ function PrestamosView(){
                 })}
               </tbody>
             </table>
+            </div>
           </Card>
 
           {/* Solicitudes de renovación */}
@@ -1282,6 +1311,7 @@ function PrestamosView(){
                 <span style={{background:"#FEF3C7",color:"#92400E",fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:99}}>{solicitudesRenovacion.length} pendiente{solicitudesRenovacion.length!==1?"s":""}</span>
               </div>
               <Card>
+                <div style={{overflowX:"auto"}}>
                 <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
                   <thead><tr style={{background:"#FFFBEB",borderBottom:"0.5px solid #FDE68A"}}>
                     {["Usuario","Libro","Vencimiento actual","Acciones"].map(h=>(
@@ -1318,6 +1348,7 @@ function PrestamosView(){
                     ))}
                   </tbody>
                 </table>
+                </div>
               </Card>
             </div>
           )}
@@ -1325,7 +1356,7 @@ function PrestamosView(){
       )}
 
       {tab==="nuevo"&&(
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>
+        <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:20}}>
           <Card style={{overflow:"visible"}}>
             <div style={{padding:"18px 20px",display:"flex",flexDirection:"column",gap:14}}>
               <h3 style={{margin:0,fontSize:14,fontWeight:500,color:"#1E293B"}}>Registrar nuevo préstamo</h3>
@@ -1418,6 +1449,7 @@ function NotifCenterView(){
 }
 
 function ReportesView(){
+  const isMobile=useIsMobile();
   const {books,users,prestamos,sysNotifs}=useApp();
   const activos=prestamos.filter(p=>p.activo);
   const enMora=activos.filter(p=>isOver(p.fechaDevolucion));
@@ -1433,7 +1465,7 @@ function ReportesView(){
         <KpiCard label="Usuarios"          value={users.length}    accent="#7C3AED" icon={Users}/>
         <KpiCard label="Catálogo"          value={books.length}    accent="#16A34A" icon={BookMarked}/>
       </div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>
+      <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:20}}>
         <Card>
           <div style={{padding:"14px 18px",borderBottom:"0.5px solid #F1F5F9",display:"flex",alignItems:"center",gap:8}}>
             <TrendingUp size={16} color="#003366"/><h3 style={{margin:0,fontSize:14,fontWeight:500,color:"#1E293B"}}>Top 3 más prestados</h3>
@@ -1498,6 +1530,7 @@ function UsuariosView(){
         </button>
       </div>
       <Card>
+        <div style={{overflowX:"auto"}}>
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
           <thead><tr style={{background:"#F8FAFC",borderBottom:"0.5px solid #E2E8F0"}}>
             {["Nombre","Usuario","Rol","Estado","Acciones"].map(h=>(
@@ -1536,6 +1569,7 @@ function UsuariosView(){
             ))}
           </tbody>
         </table>
+        </div>
       </Card>
       {modal!==null&&<UserModal initial={modal==="new"?null:modal} onClose={()=>setModal(null)} onSave={modal==="new"?addUser:updateUser}/>}
       {delTarget&&(
@@ -1607,6 +1641,7 @@ function AuditoriaView(){
     <div style={{padding:24,maxWidth:960}}>
       <SectionTitle icon={ClipboardList} label="Log de auditoría" count={auditLog.length}/>
       <Card>
+        <div style={{overflowX:"auto"}}>
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
           <thead><tr style={{background:"#F8FAFC",borderBottom:"0.5px solid #E2E8F0"}}>
             {["Fecha","Usuario","Acción","Detalle"].map(h=>(
@@ -1625,6 +1660,7 @@ function AuditoriaView(){
             ))}
           </tbody>
         </table>
+        </div>
       </Card>
     </div>
   );
@@ -1656,6 +1692,7 @@ function LoginPanelLeft(){
 
 function LoginForm(){
   const {login,users,selfRegister,addToast}=useApp();
+  const isMobile=useIsMobile();
   const [mode,setMode]=useState("login");
   const [user,setUser]=useState("");const [pass,setPass]=useState("");const [error,setError]=useState("");
   const [rNombre,setRNombre]=useState("");const [rUsuario,setRUsuario]=useState("");
@@ -1685,10 +1722,10 @@ function LoginForm(){
   };
 
   return(
-    <div style={{minHeight:"calc(100vh - 56px)",background:"linear-gradient(135deg,#001d3d 0%,#003366 60%,#0055a4 100%)",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
-      <div style={{width:"100%",maxWidth:860,display:"grid",gridTemplateColumns:"1fr 1fr",gap:0,borderRadius:18,overflow:"hidden",boxShadow:"0 24px 60px rgba(0,0,0,0.35)"}}>
-        <LoginPanelLeft/>
-        <div style={{background:"#fff",padding:"40px 38px",display:"flex",flexDirection:"column",justifyContent:"center"}}>
+    <div style={{minHeight:"calc(100vh - 56px)",background:"linear-gradient(135deg,#001d3d 0%,#003366 60%,#0055a4 100%)",display:"flex",alignItems:"center",justifyContent:"center",padding:isMobile?16:24}}>
+      <div style={{width:"100%",maxWidth:isMobile?480:860,display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:0,borderRadius:isMobile?14:18,overflow:"hidden",boxShadow:"0 24px 60px rgba(0,0,0,0.35)"}}>
+        {!isMobile&&<LoginPanelLeft/>}
+        <div style={{background:"#fff",padding:isMobile?"28px 24px":"40px 38px",display:"flex",flexDirection:"column",justifyContent:"center"}}>
           {mode==="login"&&(
             <>
               <h1 style={{margin:"0 0 5px",fontSize:20,fontWeight:500,color:"#1E293B"}}>Iniciar sesión</h1>
@@ -1768,7 +1805,7 @@ const SECTION_LABELS = {
   usuarios:"Usuarios",params:"Configuración",auditoria:"Auditoría",
 };
 
-function MainLayout(){
+function MainLayout({sidebarOpen=false,setSidebarOpen=(v?)=>{}}){
   const {session,effectiveRole,misActivos,sysNotifs,misNotificaciones}=useApp();
   const defaultTab=useMemo(()=>{
     if(hasLevel(effectiveRole,"Admin")) return "reportes";
@@ -1787,8 +1824,8 @@ function MainLayout(){
 
   return(
     <div style={{display:"flex"}}>
-      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} badge={badge}/>
-      <main style={{flex:1,background:"#F8FAFC",minHeight:"calc(100vh - 56px)"}}>
+      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} badge={badge} open={sidebarOpen} onClose={()=>setSidebarOpen(false)}/>
+      <main style={{flex:1,background:"#F8FAFC",minHeight:"calc(100vh - 56px)",minWidth:0}}>
         <Breadcrumb section={SECTION_LABELS[activeTab]||activeTab}/>
         {personal>0&&(
           <div style={{margin:"10px 24px 0",display:"flex",alignItems:"center",gap:10,background:"#EFF6FF",border:"1px solid #BFDBFE",borderRadius:10,padding:"10px 14px"}}>
@@ -1821,11 +1858,12 @@ function MainLayout(){
 // ─── APP ROOT ────────────────────────────────────────────────
 function AppShell(){
   const {session}=useApp();
+  const [sidebarOpen,setSidebarOpen]=useState(false);
   return(
     <div style={{fontFamily:"system-ui,sans-serif",minHeight:"100vh"}}>
-      <Navbar/>
+      <Navbar onToggleSidebar={()=>setSidebarOpen(o=>!o)}/>
       <ToastContainer/>
-      {!session?<LoginForm/>:<MainLayout/>}
+      {!session?<LoginForm/>:<MainLayout sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen}/>}
     </div>
   );
 }

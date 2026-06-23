@@ -6,7 +6,7 @@ import {
   BookOpen, CalendarClock, AlertCircle, Filter, Package,
   ClipboardList, RefreshCw, RotateCcw, TrendingUp, AlertTriangle,
   BarChart3, Send, MessageSquare, BookCopy, UserCog,
-  Sliders, Eye, ShieldAlert, ChevronDown, Menu
+  Sliders, Eye, ShieldAlert, ChevronDown, Menu, Sparkles
 } from "lucide-react";
 
 function useIsMobile(bp = 768) {
@@ -40,6 +40,7 @@ type UserRecord = {
   password?: string;
   rol: string;
   estado: string;
+  carrera?: string;
   isSeed?: boolean;
 };
 
@@ -116,7 +117,7 @@ type AppContextValue = {
   updateUser: (u: UserRecord) => void;
   deleteUser: (id: number) => void;
   toggleUser: (id: number) => void;
-  selfRegister: (u: { nombre: string; usuario: string; password: string }) => string | null;
+  selfRegister: (u: { nombre: string; usuario: string; password: string; carrera?: string }) => string | null;
   prestamos: Prestamo[];
   misActivos: (userId: string) => Prestamo[];
   registrarPrestamo: (bookId: number, userId: string) => boolean;
@@ -142,6 +143,23 @@ const ESTADOS_FILTER = ["Todos","disponible","prestado","reservado"];
 const ROLES = ["Admin","Bibliotecario","Usuario"];
 const ROLE_LEVEL: Record<string, number> = { Usuario:1, Bibliotecario:2, Admin:3 };
 const hasLevel = (viewed, min) => (ROLE_LEVEL[viewed]||0) >= (ROLE_LEVEL[min]||0);
+
+const CARRERAS = [
+  "Ingeniería en Informática",
+  "Ingeniería en Ciencia de Datos e IA",
+  "Técnico en Programación",
+  "Ingeniería en Ciberseguridad",
+  "Administración de Sistemas",
+  "Telecomunicaciones",
+];
+const CAREER_CATEGORIES: Record<string, string[]> = {
+  "Ingeniería en Informática":           ["Programación","Ingeniería de Software","Base de Datos","Redes"],
+  "Ingeniería en Ciencia de Datos e IA": ["Ciencia de Datos","Inteligencia Artificial","Programación"],
+  "Técnico en Programación":             ["Programación","Base de Datos","Ingeniería de Software"],
+  "Ingeniería en Ciberseguridad":        ["Redes","Base de Datos","Programación"],
+  "Administración de Sistemas":          ["Redes","Base de Datos","Arquitectura"],
+  "Telecomunicaciones":                  ["Redes","Programación"],
+};
 
 const fmtDate = d => d.toLocaleDateString("es-CL",{day:"2-digit",month:"2-digit",year:"numeric"});
 const addDays  = (n, base = null) => { const d = base ? new Date(base) : new Date(); d.setDate(d.getDate()+n); return fmtDate(d); };
@@ -179,7 +197,7 @@ const INITIAL_USERS = ensureSeedAdmin([
 const INITIAL_PRESTAMOS: Prestamo[] = [];
 const DEFAULT_PARAMS = { diasPrestamo:7, limiteLibros:3, multaPorDia:1000 };
 const EMPTY_BOOK = {titulo:"",autor:"",isbn:"",categoria:"Programación",portada:"",estado:"disponible",stock:1};
-const EMPTY_USER = {nombre:"",usuario:"",password:"",rol:"Usuario",estado:"activo"};
+const EMPTY_USER = {nombre:"",usuario:"",password:"",rol:"Usuario",estado:"activo",carrera:""};
 
 // ─── CONTEXT ─────────────────────────────────────────────────
 const AppCtx = createContext<AppContextValue | null>(null);
@@ -269,7 +287,6 @@ function AppProvider({ children }: { children: ReactNode }) {
     const fechaDev = addDays(params.diasPrestamo);
     const np = {id:Date.now(),bookId,userId,fechaInicio:fmtDate(new Date()),fechaDevolucion:fechaDev,renovado:false,renewalStatus:null,activo:true};
     setPrestamos(p=>[...p,np]);
-    // Notificación automática al usuario (Fase 13)
     setUserNotifs(p=>[...p,{
       id:Date.now()+1,
       targetUserId:userId,
@@ -331,11 +348,11 @@ function AppProvider({ children }: { children: ReactNode }) {
   );
   const marcarLeida = id => setUserNotifs(p=>p.map(n=>n.id===id?{...n,leida:true}:n));
 
-  const selfRegister = ({nombre, usuario, password}) => {
+  const selfRegister = ({nombre, usuario, password, carrera=""}) => {
     if(users.some(u=>u.usuario===usuario)) return "El usuario ya existe.";
     const errors = validatePassword(password);
     if(errors.length) return errors[0];
-    const nu = {id:Date.now(),nombre,usuario,password,rol:"Usuario",estado:"activo"};
+    const nu = {id:Date.now(),nombre,usuario,password,rol:"Usuario",estado:"activo",carrera};
     setUsers(p=>ensureSeedAdmin([...p,nu]));
     log("Auto-registro",nombre,nombre);
     return null;
@@ -585,6 +602,7 @@ function Sidebar({activeTab,setActiveTab,badge={},open=false,onClose=()=>{}}){
     if(hasLevel(effectiveRole,"Usuario")){
       all.push({id:"catalogo",label:"Catálogo",icon:BookOpen});
       all.push({id:"misprestamos",label:"Mis Préstamos",icon:CalendarClock});
+      all.push({id:"recomendaciones",label:"Sugerencias",icon:Sparkles});
     }
     if(hasLevel(effectiveRole,"Bibliotecario")){
       all.push({id:"sep1",divider:true});
@@ -723,6 +741,13 @@ function UserModal({initial,onClose,onSave}){
         {field("Nombre *","nombre","Ej: Ana Torres")}
         {field("Usuario *","usuario","Ej: ana.torres")}
         {field("Contraseña","password","••••••","password")}
+        <div style={{display:"flex",flexDirection:"column",gap:4}}>
+          <label style={{fontSize:12,color:"#64748B"}}>Carrera</label>
+          <select value={f.carrera||""} onChange={e=>set("carrera",e.target.value)} style={{width:"100%",boxSizing:"border-box"}}>
+            <option value="">Sin especificar</option>
+            {CARRERAS.map(c=><option key={c}>{c}</option>)}
+          </select>
+        </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
           <div style={{display:"flex",flexDirection:"column",gap:4}}>
             <label style={{fontSize:12,color:"#64748B"}}>Rol</label>
@@ -1090,6 +1115,134 @@ function MisPrestamosView({userId}){
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── RECOMENDACIONES ─────────────────────────────────────────
+function RecomendacionesView({userId}:{userId:string}){
+  const {books,prestamos,users,registrarPrestamo}=useApp();
+  const user=users.find(u=>u.usuario===userId);
+  const [detalle,setDetalle]=useState<Book|null>(null);
+
+  const recs=useMemo(()=>{
+    const userLoans=prestamos.filter(p=>p.userId===userId);
+    const activeBookIds=new Set(userLoans.filter(p=>p.activo).map(p=>p.bookId));
+    const allLoanBookIds=new Set(userLoans.map(p=>p.bookId));
+
+    const catCount:Record<string,number>={};
+    userLoans.forEach(p=>{
+      const b=books.find(x=>x.id===p.bookId);
+      if(b) catCount[b.categoria]=(catCount[b.categoria]||0)+1;
+    });
+
+    const careerCats=user?.carrera?(CAREER_CATEGORIES[user.carrera]||[]):[];
+
+    return books
+      .filter(b=>!activeBookIds.has(b.id)&&b.stock>0)
+      .map(b=>{
+        let score=(b.prestamos||0)*0.1;
+        const reasons:string[]=[];
+        if(catCount[b.categoria]){
+          score+=catCount[b.categoria]*3;
+          reasons.push(`Relacionado con tus lecturas de ${b.categoria}`);
+        }
+        if(careerCats.includes(b.categoria)){
+          score+=2;
+          if(!reasons.length) reasons.push(`Recomendado para ${user?.carrera}`);
+        }
+        if(allLoanBookIds.has(b.id)) score*=0.3;
+        return {book:b,score,reason:reasons[0]||"Popular entre los estudiantes"};
+      })
+      .sort((a,b)=>b.score-a.score)
+      .slice(0,6);
+  },[books,prestamos,userId,user]);
+
+  const totalLecturas=prestamos.filter(p=>p.userId===userId).length;
+  const catEntries=Object.entries(
+    prestamos.filter(p=>p.userId===userId).reduce((acc,p)=>{
+      const cat=books.find(b=>b.id===p.bookId)?.categoria;
+      if(cat) acc[cat]=(acc[cat]||0)+1;
+      return acc;
+    },{} as Record<string,number>)
+  ).sort((a,b)=>b[1]-a[1]);
+  const topCat=catEntries[0]?.[0];
+
+  return(
+    <div style={{padding:24,maxWidth:960}}>
+      {/* Header */}
+      <div style={{background:"#fff",borderRadius:12,border:"0.5px solid #E2E8F0",padding:"18px 20px",marginBottom:20,display:"flex",gap:16,alignItems:"center",flexWrap:"wrap"}}>
+        <div style={{flex:1,minWidth:200}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
+            <Sparkles size={16} color="#F5A623"/>
+            <p style={{margin:0,fontSize:15,fontWeight:500,color:"#1E293B"}}>Sugerencias personalizadas</p>
+          </div>
+          <p style={{margin:0,fontSize:13,color:"#64748B"}}>
+            {user?.carrera?`Carrera: ${user.carrera}.`:""}{" "}
+            {topCat?`Tu categoría más leída: ${topCat}.`:""}
+            {!user?.carrera&&!topCat&&"Completa tu perfil o pide libros para recibir sugerencias a medida."}
+          </p>
+        </div>
+        <div style={{display:"flex",gap:10,flexShrink:0}}>
+          <div style={{textAlign:"center",padding:"8px 16px",background:"#F8FAFC",borderRadius:10}}>
+            <p style={{margin:0,fontSize:20,fontWeight:500,color:"#003366"}}>{totalLecturas}</p>
+            <p style={{margin:0,fontSize:11,color:"#94A3B8"}}>lecturas</p>
+          </div>
+          <div style={{textAlign:"center",padding:"8px 16px",background:"#F8FAFC",borderRadius:10}}>
+            <p style={{margin:0,fontSize:20,fontWeight:500,color:"#003366"}}>{recs.length}</p>
+            <p style={{margin:0,fontSize:11,color:"#94A3B8"}}>sugerencias</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Sin carrera y sin historial */}
+      {!user?.carrera&&totalLecturas===0&&(
+        <div style={{background:"#FFFBEB",border:"0.5px solid #FDE68A",borderRadius:10,padding:"12px 16px",marginBottom:16,display:"flex",gap:10,alignItems:"flex-start"}}>
+          <AlertTriangle size={14} color="#D97706" style={{flexShrink:0,marginTop:2}}/>
+          <p style={{margin:0,fontSize:13,color:"#92400E"}}>Las sugerencias se basan en tu historial de lecturas y carrera. Puedes registrar tu carrera al crear la cuenta o pedirle al bibliotecario que la actualice en tu perfil.</p>
+        </div>
+      )}
+
+      {/* Grilla */}
+      {recs.length===0?(
+        <div style={{textAlign:"center",padding:"48px 0"}}>
+          <BookOpen size={40} color="#CBD5E1" style={{margin:"0 auto 12px",display:"block"}}/>
+          <p style={{fontSize:15,fontWeight:500,color:"#94A3B8",margin:"0 0 4px"}}>Sin sugerencias disponibles</p>
+          <p style={{fontSize:13,color:"#CBD5E1",margin:0}}>Todos los libros sugeridos están prestados o ya los tienes activos.</p>
+        </div>
+      ):(
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(270px,1fr))",gap:14}}>
+          {recs.map(({book,reason})=>{
+            const yaMio=prestamos.some(p=>p.userId===userId&&p.activo&&p.bookId===book.id);
+            return(
+              <div key={book.id} style={{background:"#fff",borderRadius:12,border:"0.5px solid #E2E8F0",overflow:"hidden",display:"flex",flexDirection:"column"}}>
+                <div style={{display:"flex",gap:12,padding:"14px 14px 0"}}>
+                  <img src={book.portada} alt="" style={{width:54,height:70,objectFit:"cover",borderRadius:6,background:"#EEF2FF",flexShrink:0,cursor:"pointer"}}
+                    onClick={()=>setDetalle(book)}
+                    onError={e=>{e.currentTarget.style.background="#EEF2FF";e.currentTarget.src="";}}/>
+                  <div style={{flex:1,minWidth:0}}>
+                    <p style={{margin:"0 0 3px",fontWeight:500,fontSize:13,color:"#1E293B",lineHeight:1.3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",cursor:"pointer"}}
+                      onClick={()=>setDetalle(book)}>{book.titulo}</p>
+                    <p style={{margin:"0 0 6px",fontSize:11,color:"#94A3B8"}}>{book.autor}</p>
+                    <span style={{fontSize:10,color:"#64748B",background:"#F1F5F9",padding:"2px 8px",borderRadius:99}}>{book.categoria}</span>
+                  </div>
+                </div>
+                <div style={{padding:"10px 14px 14px",flex:1,display:"flex",flexDirection:"column",gap:8}}>
+                  <div style={{display:"flex",alignItems:"flex-start",gap:6,background:"#F0FDF4",borderRadius:8,padding:"6px 10px"}}>
+                    <Sparkles size={11} color="#16A34A" style={{flexShrink:0,marginTop:2}}/>
+                    <p style={{margin:0,fontSize:11,color:"#166534",lineHeight:1.4}}>{reason}</p>
+                  </div>
+                  <button onClick={()=>registrarPrestamo(book.id,userId)} disabled={yaMio}
+                    style={{width:"100%",padding:"8px 0",borderRadius:8,border:"none",background:yaMio?"#F1F5F9":"#003366",color:yaMio?"#94A3B8":"#fff",fontSize:12,fontWeight:500,cursor:yaMio?"default":"pointer"}}>
+                    {yaMio?"Ya tienes este libro":"Pedir prestado"}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {detalle&&<BookDetailModal book={detalle} userId={userId} onClose={()=>setDetalle(null)}/>}
     </div>
   );
 }
@@ -1684,7 +1837,7 @@ function LoginPanelLeft(){
             </div>
           ))}
         </div>
-        <p style={{margin:"16px 0 0",fontSize:11,color:"rgba(255,255,255,0.28)"}}>SGBU v1.0 — Revisión 02 · 2026</p>
+        <p style={{margin:"16px 0 0",fontSize:11,color:"rgba(255,255,255,0.28)"}}>SGBU v2.0 — Revisión 02 · 2026</p>
       </div>
     </div>
   );
@@ -1697,6 +1850,7 @@ function LoginForm(){
   const [user,setUser]=useState("");const [pass,setPass]=useState("");const [error,setError]=useState("");
   const [rNombre,setRNombre]=useState("");const [rUsuario,setRUsuario]=useState("");
   const [rPass,setRPass]=useState("");const [rPass2,setRPass2]=useState("");
+  const [rCarrera,setRCarrera]=useState("");
   const [rSubmit,setRSubmit]=useState("");
 
   const pwdErrors=validatePassword(rPass);
@@ -1714,11 +1868,11 @@ function LoginForm(){
     if(!rNombre.trim()||!rUsuario.trim()||!rPass){setRSubmit("Completa todos los campos.");return;}
     if(pwdErrors.length) return;
     if(rPass!==rPass2){setRSubmit("Las contraseñas no coinciden.");return;}
-    const err=selfRegister({nombre:rNombre.trim(),usuario:rUsuario.trim(),password:rPass});
+    const err=selfRegister({nombre:rNombre.trim(),usuario:rUsuario.trim(),password:rPass,carrera:rCarrera});
     if(err){setRSubmit(err);return;}
     addToast("Cuenta creada. Ya puedes iniciar sesión.","success");
     setUser(rUsuario.trim());setPass("");setMode("login");
-    setRNombre("");setRUsuario("");setRPass("");setRPass2("");
+    setRNombre("");setRUsuario("");setRPass("");setRPass2("");setRCarrera("");
   };
 
   return(
@@ -1754,6 +1908,13 @@ function LoginForm(){
                 <div>
                   <label style={{fontSize:13,color:"#475569",display:"block",marginBottom:5,fontWeight:500}}>Nombre completo *</label>
                   <input value={rNombre} onChange={e=>setRNombre(e.target.value)} placeholder="Ej: Ana Torres" style={{width:"100%",boxSizing:"border-box"}}/>
+                </div>
+                <div>
+                  <label style={{fontSize:13,color:"#475569",display:"block",marginBottom:5,fontWeight:500}}>Carrera</label>
+                  <select value={rCarrera} onChange={e=>setRCarrera(e.target.value)} style={{width:"100%",boxSizing:"border-box",fontSize:13,borderRadius:8,padding:"9px 10px",border:"0.5px solid #E2E8F0",background:"#fff",color:"#475569"}}>
+                    <option value="">Sin especificar</option>
+                    {CARRERAS.map(c=><option key={c}>{c}</option>)}
+                  </select>
                 </div>
                 <div>
                   <label style={{fontSize:13,color:"#475569",display:"block",marginBottom:5,fontWeight:500}}>Usuario *</label>
@@ -1799,7 +1960,7 @@ function LoginForm(){
 
 // ─── MAIN LAYOUT ─────────────────────────────────────────────
 const SECTION_LABELS = {
-  catalogo:"Catálogo",misprestamos:"Mis Préstamos",
+  catalogo:"Catálogo",misprestamos:"Mis Préstamos",recomendaciones:"Sugerencias",
   inventario:"Inventario",prestamos:"Préstamos",
   notificaciones:"Notificaciones",reportes:"Reportes",
   usuarios:"Usuarios",params:"Configuración",auditoria:"Auditoría",
@@ -1813,8 +1974,7 @@ function MainLayout({sidebarOpen=false,setSidebarOpen=()=>{}}:{sidebarOpen?: boo
     return "catalogo";
   },[effectiveRole]);
   const [activeTab,setActiveTab]=useState(defaultTab);
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(()=>setActiveTab(defaultTab),[effectiveRole,defaultTab]);
+  useEffect(()=>{ setActiveTab(defaultTab); },[effectiveRole,defaultTab]);
 
   const userId=session.userId;
   const activos=misActivos(userId);
@@ -1837,8 +1997,9 @@ function MainLayout({sidebarOpen=false,setSidebarOpen=()=>{}}:{sidebarOpen?: boo
             <AlertCircle size={15} color="#DC2626"/><p style={{margin:0,fontSize:13,color:"#991B1B"}}>Tienes <strong>{enMora}</strong> préstamo{enMora!==1?"s":""} vencido{enMora!==1?"s":""}. <button onClick={()=>setActiveTab("misprestamos")} style={{background:"none",border:"none",color:"#003366",textDecoration:"underline",cursor:"pointer",fontSize:13,padding:0}}>Ver préstamos →</button></p>
           </div>
         )}
-        {activeTab==="catalogo"     &&<CatalogoView userId={userId}/>}
-        {activeTab==="misprestamos" &&<MisPrestamosView userId={userId}/>}
+        {activeTab==="catalogo"        &&<CatalogoView userId={userId}/>}
+        {activeTab==="misprestamos"    &&<MisPrestamosView userId={userId}/>}
+        {activeTab==="recomendaciones" &&<RecomendacionesView userId={userId}/>}
         {hasLevel(effectiveRole,"Bibliotecario")&&<>
           {activeTab==="inventario"     &&<InventarioView/>}
           {activeTab==="prestamos"      &&<PrestamosView/>}

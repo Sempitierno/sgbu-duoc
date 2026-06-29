@@ -118,12 +118,13 @@ type AppContextValue = {
   deleteUser: (id: number) => void;
   toggleUser: (id: number) => void;
   selfRegister: (u: { nombre: string; usuario: string; password: string; carrera?: string }) => string | null;
+  selfRegisterBibliotecario: (u: { nombre: string; usuario: string; password: string }) => string | null;
   prestamos: Prestamo[];
   misActivos: (userId: string) => Prestamo[];
-  registrarPrestamo: (bookId: number, userId: string) => boolean;
+  registrarPrestamo: (bookId: number, userId: string, customFechaDev?: string) => boolean;
   registrarDevolucion: (prestamoId: number) => void;
   solicitarRenovacion: (prestamoId: number, userId: string) => void;
-  aprobarRenovacion: (prestamoId: number) => void;
+  aprobarRenovacion: (prestamoId: number, nuevaFecha: string) => void;
   rechazarRenovacion: (prestamoId: number) => void;
   params: Params;
   updateParams: (p: Params) => void;
@@ -161,11 +162,15 @@ const CAREER_CATEGORIES: Record<string, string[]> = {
   "Telecomunicaciones":                  ["Redes","Programación"],
 };
 
-const fmtDate = d => d.toLocaleDateString("es-CL",{day:"2-digit",month:"2-digit",year:"numeric"});
+const fmtDate  = (d: Date) => `${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")}/${d.getFullYear()}`;
 const addDays  = (n, base = null) => { const d = base ? new Date(base) : new Date(); d.setDate(d.getDate()+n); return fmtDate(d); };
-const parseCL  = s => { if(!s) return new Date(0); const [d,m,y]=s.split("/"); return new Date(`${y}-${m}-${d}`); };
-const isOver   = s => parseCL(s) < new Date();
-const daysLeft = s => Math.ceil((parseCL(s).getTime()-Date.now())/86400000);
+const parseCL  = s => { if(!s) return new Date(0); const [d,m,y]=s.split("/"); return new Date(+y,+m-1,+d); };
+const todayMidnight = () => { const d=new Date(); d.setHours(0,0,0,0); return d; };
+const isOver   = s => parseCL(s) < todayMidnight();
+const daysLeft = s => Math.ceil((parseCL(s).getTime()-todayMidnight().getTime())/86400000);
+// Converters for <input type="date"> (yyyy-mm-dd) ↔ CL format (dd/mm/yyyy)
+const clToISO  = (cl:string) => { if(!cl) return ""; const [d,m,y]=cl.split("/"); return `${y}-${m.padStart(2,"0")}-${d.padStart(2,"0")}`; };
+const isoToCL  = (iso:string) => { if(!iso) return ""; const [y,m,d]=iso.split("-"); return `${d}/${m}/${y}`; };
 
 const PWD_RULES = [
   { test: v => v.length >= 8,   msg: "Mínimo 8 caracteres" },
@@ -277,14 +282,14 @@ function AppProvider({ children }: { children: ReactNode }) {
   // Préstamos
   const misActivos = userId => prestamos.filter(p=>p.activo&&p.userId===userId);
 
-  const registrarPrestamo = (bookId, userId) => {
+  const registrarPrestamo = (bookId, userId, customFechaDev?) => {
     const activos = misActivos(userId);
     if(activos.length>=params.limiteLibros){ addToast(`Límite: máximo ${params.limiteLibros} préstamos.`,"error"); return false; }
     const book = books.find(b=>b.id===bookId);
     if(!book||book.stock<=0){ addToast("Sin stock disponible.","error"); return false; }
     const user = users.find(u=>u.usuario===userId);
     setBooks(p=>p.map(x=>x.id===bookId?{...x,stock:Math.max(0,x.stock-1),estado:x.stock-1<=0?"prestado":"disponible",prestamos:(x.prestamos||0)+1}:x));
-    const fechaDev = addDays(params.diasPrestamo);
+    const fechaDev = customFechaDev || addDays(params.diasPrestamo);
     const np = {id:Date.now(),bookId,userId,fechaInicio:fmtDate(new Date()),fechaDevolucion:fechaDev,renovado:false,renewalStatus:null,activo:true};
     setPrestamos(p=>[...p,np]);
     setUserNotifs(p=>[...p,{
@@ -316,10 +321,9 @@ function AppProvider({ children }: { children: ReactNode }) {
     addToast("Solicitud de renovación enviada. El bibliotecario debe confirmarla.","warning");
   };
 
-  const aprobarRenovacion = prestamoId => {
+  const aprobarRenovacion = (prestamoId, nuevaFecha) => {
     const pr = prestamos.find(p=>p.id===prestamoId); if(!pr) return;
     const book = books.find(b=>b.id===pr.bookId);
-    const nuevaFecha = addDays(params.diasPrestamo, parseCL(pr.fechaDevolucion));
     setPrestamos(p=>p.map(x=>x.id===prestamoId?{...x,fechaDevolucion:nuevaFecha,renovado:true,renewalStatus:"approved"}:x));
     setUserNotifs(p=>[...p,{id:Date.now(),targetUserId:pr.userId,mensaje:`✅ Tu solicitud de renovación para "${book?.titulo}" fue aprobada. Nueva fecha: ${nuevaFecha}.`,bookTitle:book?.titulo,fecha:fmtDate(new Date()),leida:false}]);
     log("Renovación aprobada",book?.titulo);
@@ -358,11 +362,21 @@ function AppProvider({ children }: { children: ReactNode }) {
     return null;
   };
 
+  const selfRegisterBibliotecario = ({nombre, usuario, password}: {nombre:string;usuario:string;password:string}) => {
+    if(users.some(u=>u.usuario===usuario)) return "El usuario ya existe.";
+    const errors = validatePassword(password);
+    if(errors.length) return errors[0];
+    const nu = {id:Date.now(),nombre,usuario,password,rol:"Bibliotecario",estado:"pendiente"};
+    setUsers(p=>ensureSeedAdmin([...p,nu]));
+    log("Solicitud cuenta bibliotecario",nombre,nombre);
+    return null;
+  };
+
   return (
     <AppCtx.Provider value={{
       session,effectiveRole,viewAs,setViewAs,login,logout,
       books,addBook,updateBook,deleteBook,updateStock,
-      users,addUser,updateUser,deleteUser,toggleUser,selfRegister,
+      users,addUser,updateUser,deleteUser,toggleUser,selfRegister,selfRegisterBibliotecario,
       prestamos,misActivos,registrarPrestamo,registrarDevolucion,
       solicitarRenovacion,aprobarRenovacion,rechazarRenovacion,
       params,updateParams,
@@ -410,6 +424,7 @@ const STATUS_CFG = {
   reservado:    {bg:"#DBEAFE",color:"#1E40AF",label:"Reservado"},
   activo:       {bg:"#DCFCE7",color:"#166534",label:"Activo"},
   suspendido:   {bg:"#FEE2E2",color:"#991B1B",label:"Suspendido"},
+  pendiente:    {bg:"#FEF9C3",color:"#713F12",label:"Pendiente"},
   mora:         {bg:"#FEF3C7",color:"#92400E",label:"Mora"},
   Admin:        {bg:"#F3E8FF",color:"#6B21A8",label:"Admin"},
   Bibliotecario:{bg:"#FFF3CD",color:"#92400E",label:"Bibliotecario"},
@@ -610,10 +625,10 @@ function Sidebar({activeTab,setActiveTab,badge={},open=false,onClose=()=>{}}){
       all.push({id:"prestamos",label:"Préstamos",icon:BookCopy});
       all.push({id:"notificaciones",label:"Notificaciones",icon:MessageSquare});
       all.push({id:"reportes",label:"Reportes",icon:BarChart3});
+      all.push({id:"usuarios",label:"Usuarios",icon:UserCog});
     }
     if(hasLevel(effectiveRole,"Admin")){
       all.push({id:"sep2",divider:true});
-      all.push({id:"usuarios",label:"Usuarios",icon:UserCog});
       all.push({id:"params",label:"Configuración",icon:Sliders});
       all.push({id:"auditoria",label:"Auditoría",icon:ClipboardList});
     }
@@ -725,8 +740,10 @@ function BookModal({initial,onClose,onSave}){
   );
 }
 
-function UserModal({initial,onClose,onSave}){
-  const [f,setF]=useState(initial||EMPTY_USER);
+function UserModal({initial,onClose,onSave,callerRole="Admin"}){
+  const isBiblioCall = callerRole==="Bibliotecario";
+  const initData = initial||{...EMPTY_USER,rol:isBiblioCall?"Usuario":"Usuario"};
+  const [f,setF]=useState(initData);
   const set=(k,v)=>setF(p=>({...p,[k]:v}));
   const isEdit=!!initial?.id;
   const field=(label,key,ph,type="text")=>(
@@ -737,6 +754,12 @@ function UserModal({initial,onClose,onSave}){
   );
   return(
     <ModalShell title={isEdit?"Editar usuario":"Registrar usuario"} onClose={onClose} maxWidth={420}>
+      {isBiblioCall&&(
+        <div style={{display:"flex",alignItems:"center",gap:8,background:"#EFF6FF",border:"0.5px solid #BFDBFE",borderRadius:8,padding:"8px 12px",marginBottom:14}}>
+          <ShieldAlert size={13} color="#1D4ED8" style={{flexShrink:0}}/>
+          <p style={{margin:0,fontSize:12,color:"#1E40AF"}}>Solo puedes registrar cuentas de tipo <strong>Usuario</strong>.</p>
+        </div>
+      )}
       <div style={{display:"flex",flexDirection:"column",gap:12}}>
         {field("Nombre *","nombre","Ej: Ana Torres")}
         {field("Usuario *","usuario","Ej: ana.torres")}
@@ -751,9 +774,12 @@ function UserModal({initial,onClose,onSave}){
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
           <div style={{display:"flex",flexDirection:"column",gap:4}}>
             <label style={{fontSize:12,color:"#64748B"}}>Rol</label>
-            <select value={f.rol} onChange={e=>set("rol",e.target.value)} style={{width:"100%",boxSizing:"border-box"}}>
-              {ROLES.map(r=><option key={r}>{r}</option>)}
-            </select>
+            {isBiblioCall
+              ? <input value="Usuario" readOnly style={{width:"100%",boxSizing:"border-box",background:"#F8FAFC",color:"#64748B",cursor:"not-allowed"}}/>
+              : <select value={f.rol} onChange={e=>set("rol",e.target.value)} style={{width:"100%",boxSizing:"border-box"}}>
+                  {ROLES.map(r=><option key={r}>{r}</option>)}
+                </select>
+            }
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:4}}>
             <label style={{fontSize:12,color:"#64748B"}}>Estado</label>
@@ -765,8 +791,11 @@ function UserModal({initial,onClose,onSave}){
       </div>
       <div style={{display:"flex",gap:10,marginTop:20,justifyContent:"flex-end"}}>
         <button onClick={onClose} style={{padding:"8px 18px",borderRadius:8,border:"0.5px solid #E2E8F0",background:"#fff",color:"#475569",cursor:"pointer",fontSize:13}}>Cancelar</button>
-        <button onClick={()=>{if(!f.nombre.trim()||!f.usuario.trim())return;onSave(f);onClose();}}
-          style={{padding:"8px 20px",borderRadius:8,border:"none",background:"#003366",color:"#fff",cursor:"pointer",fontSize:13,fontWeight:500}}>
+        <button onClick={()=>{
+          if(!f.nombre.trim()||!f.usuario.trim()) return;
+          const saved = isBiblioCall ? {...f,rol:"Usuario"} : f;
+          onSave(saved);onClose();
+        }} style={{padding:"8px 20px",borderRadius:8,border:"none",background:"#003366",color:"#fff",cursor:"pointer",fontSize:13,fontWeight:500}}>
           {isEdit?"Guardar":"Registrar"}
         </button>
       </div>
@@ -801,19 +830,78 @@ function StockModal({book,onClose,onUpdate}){
   );
 }
 
-function ConfirmPrestamoModal({book,fechaDev,onConfirm,onCancel}){
+function ApprovalDateModal({prestamo, defaultDias, onConfirm, onCancel}: {
+  prestamo: {id:number; book?:{titulo?:string;portada?:string;autor?:string}; user?:{nombre?:string}; fechaDevolucion:string};
+  defaultDias: number;
+  onConfirm: (fecha: string) => void;
+  onCancel: () => void;
+}){
+  const defaultISO = clToISO(addDays(defaultDias));
+  const [selDate, setSelDate] = useState(defaultISO);
+  const selectedCL = isoToCL(selDate) || addDays(defaultDias);
+  const isPast = selDate && selDate < clToISO(fmtDate(new Date()));
+
   return(
-    <ModalShell title="Confirmar préstamo" onClose={onCancel} maxWidth={400}>
-      <div style={{display:"flex",gap:14,marginBottom:14}}>
+    <ModalShell title="Fijar fecha de devolución" onClose={onCancel} maxWidth={420}>
+      <div style={{display:"flex",gap:12,marginBottom:16,background:"#F8FAFC",borderRadius:10,padding:"12px 14px"}}>
+        <img src={prestamo.book?.portada} alt="" style={{width:44,height:56,objectFit:"cover",borderRadius:5,background:"#EEF2FF",flexShrink:0}}
+          onError={e=>{e.currentTarget.style.background="#EEF2FF";e.currentTarget.src="";}}/>
+        <div style={{flex:1,minWidth:0}}>
+          <p style={{margin:"0 0 2px",fontWeight:500,fontSize:13,color:"#1E293B",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{prestamo.book?.titulo||"—"}</p>
+          <p style={{margin:"0 0 4px",fontSize:11,color:"#94A3B8"}}>{prestamo.book?.autor||""}</p>
+          <p style={{margin:0,fontSize:12,color:"#64748B"}}>Usuario: <strong>{prestamo.user?.nombre||"—"}</strong></p>
+        </div>
+      </div>
+
+      <div style={{marginBottom:6}}>
+        <label style={{fontSize:13,color:"#475569",display:"block",marginBottom:6,fontWeight:500}}>Nueva fecha de devolución</label>
+        <input type="date" value={selDate} onChange={e=>setSelDate(e.target.value)}
+          style={{width:"100%",boxSizing:"border-box",fontSize:15,padding:"10px 12px",borderRadius:8,border:"0.5px solid #E2E8F0",fontFamily:"system-ui,sans-serif"}}/>
+        <p style={{margin:"5px 0 0",fontSize:11,color:"#94A3B8"}}>Puedes seleccionar cualquier fecha — incluyendo fechas pasadas.</p>
+      </div>
+
+      {isPast&&(
+        <div style={{display:"flex",alignItems:"flex-start",gap:8,background:"#FEF2F2",border:"0.5px solid #FECACA",borderRadius:8,padding:"9px 12px",marginBottom:6}}>
+          <AlertTriangle size={14} color="#DC2626" style={{flexShrink:0,marginTop:1}}/>
+          <p style={{margin:0,fontSize:12,color:"#991B1B"}}>Fecha en el pasado — el préstamo nacerá vencido y generará alertas de mora.</p>
+        </div>
+      )}
+
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:16}}>
+        <button onClick={onCancel} style={{padding:"9px 20px",borderRadius:8,border:"0.5px solid #E2E8F0",background:"#fff",color:"#475569",cursor:"pointer",fontSize:13}}>Cancelar</button>
+        <button onClick={()=>selDate&&onConfirm(selectedCL)} disabled={!selDate}
+          style={{padding:"9px 22px",borderRadius:8,border:"none",background:selDate?(isPast?"#DC2626":"#16A34A"):"#E2E8F0",color:selDate?"#fff":"#94A3B8",cursor:selDate?"pointer":"default",fontSize:13,fontWeight:500,display:"flex",alignItems:"center",gap:6}}>
+          <CheckCircle size={14}/> {isPast?"Aprobar (con mora)":"Aprobar"}
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+function ConfirmPrestamoModal({book,fechaDev,onConfirm,onCancel,allowDateEdit=false}){
+  const [selDate,setSelDate]=useState(clToISO(fechaDev));
+  const displayDate=isoToCL(selDate)||fechaDev;
+  return(
+    <ModalShell title="Confirmar préstamo" onClose={onCancel} maxWidth={420}>
+      <div style={{display:"flex",gap:14,marginBottom:16}}>
         <img src={book.portada} alt="" style={{width:52,height:66,objectFit:"cover",borderRadius:6,background:"#EEF2FF",flexShrink:0}} onError={e=>{e.currentTarget.style.background="#EEF2FF";e.currentTarget.src="";}}/>
         <div><p style={{margin:"0 0 4px",fontSize:14,fontWeight:500,color:"#1E293B"}}>{book.titulo}</p><p style={{margin:0,fontSize:12,color:"#94A3B8"}}>{book.autor}</p></div>
       </div>
-      <div style={{background:"#F0FDF4",border:"0.5px solid #BBF7D0",borderRadius:8,padding:"10px 14px",marginBottom:18}}>
-        <p style={{margin:0,fontSize:13,color:"#166534"}}>📅 Fecha de devolución: <strong>{fechaDev}</strong></p>
-      </div>
+      {allowDateEdit?(
+        <div style={{marginBottom:18}}>
+          <label style={{fontSize:13,color:"#475569",display:"block",marginBottom:6,fontWeight:500}}>📅 Fecha de devolución</label>
+          <input type="date" value={selDate} onChange={e=>setSelDate(e.target.value)}
+            style={{width:"100%",boxSizing:"border-box",fontSize:14,padding:"9px 12px",borderRadius:8,border:"0.5px solid #E2E8F0"}}/>
+          <p style={{margin:"5px 0 0",fontSize:11,color:"#94A3B8"}}>Puedes escoger cualquier fecha (pasada o futura).</p>
+        </div>
+      ):(
+        <div style={{background:"#F0FDF4",border:"0.5px solid #BBF7D0",borderRadius:8,padding:"10px 14px",marginBottom:18}}>
+          <p style={{margin:0,fontSize:13,color:"#166534"}}>📅 Fecha de devolución: <strong>{displayDate}</strong></p>
+        </div>
+      )}
       <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
         <button onClick={onCancel} style={{padding:"8px 18px",borderRadius:8,border:"0.5px solid #E2E8F0",background:"#fff",color:"#475569",cursor:"pointer",fontSize:13}}>Cancelar</button>
-        <button onClick={onConfirm} style={{padding:"8px 20px",borderRadius:8,border:"none",background:"#003366",color:"#fff",cursor:"pointer",fontSize:13,fontWeight:500}}>Confirmar</button>
+        <button onClick={()=>onConfirm(displayDate)} style={{padding:"8px 20px",borderRadius:8,border:"none",background:"#003366",color:"#fff",cursor:"pointer",fontSize:13,fontWeight:500}}>Confirmar</button>
       </div>
     </ModalShell>
   );
@@ -1024,14 +1112,14 @@ function CatalogoView({userId}){
           );
         })}
       </div>
-      {pending&&<ConfirmPrestamoModal book={pending} fechaDev={fechaDev} onConfirm={()=>{registrarPrestamo(pending.id,userId);setPending(null);}} onCancel={()=>setPending(null)}/>}
+      {pending&&<ConfirmPrestamoModal book={pending} fechaDev={fechaDev} onConfirm={(fd)=>{registrarPrestamo(pending.id,userId,fd);setPending(null);}} onCancel={()=>setPending(null)}/>}
       {detalle&&<BookDetailModal book={detalle} userId={userId} onClose={()=>setDetalle(null)}/>}
     </div>
   );
 }
 
 function MisPrestamosView({userId}){
-  const {misActivos,books,solicitarRenovacion,registrarDevolucion,users,params}=useApp();
+  const {misActivos,books,solicitarRenovacion,users,params}=useApp();
   const activos=misActivos(userId);
   const me=users.find(u=>u.usuario===userId);
   return(
@@ -1105,9 +1193,9 @@ function MisPrestamosView({userId}){
                       style={{display:"flex",alignItems:"center",gap:5,padding:"6px 12px",borderRadius:7,border:`0.5px solid ${isPending?"#FDE68A":isRejected?"#FECACA":"#BFDBFE"}`,background:isPending?"#FFFBEB":isRejected?"#FEF2F2":disabledRenew?"#F8FAFC":"#EFF6FF",color:isPending?"#92400E":isRejected?"#DC2626":disabledRenew?"#94A3B8":"#1D4ED8",fontSize:12,fontWeight:500,cursor:disabledRenew?"default":"pointer"}}>
                       <RefreshCw size={12}/>{renewLabel}
                     </button>
-                    <button onClick={()=>registrarDevolucion(pr.id)} style={{display:"flex",alignItems:"center",gap:5,padding:"6px 12px",borderRadius:7,border:"0.5px solid #BBF7D0",background:"#F0FDF4",color:"#16A34A",fontSize:12,fontWeight:500,cursor:"pointer"}}>
-                      <RotateCcw size={12}/> Devolver
-                    </button>
+                    <div style={{display:"flex",alignItems:"center",gap:5,padding:"6px 12px",borderRadius:7,border:"0.5px solid #E2E8F0",background:"#F8FAFC",color:"#94A3B8",fontSize:11}}>
+                      <RotateCcw size={11}/> La devolución la registra el bibliotecario
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1331,6 +1419,7 @@ function PrestamosView(){
   const [selBook,setSelBook]=useState("");
   const [pendingNew,setPendingNew]=useState(null);
   const [pendingDev,setPendingDev]=useState(null);
+  const [pendingApproval,setPendingApproval]=useState(null);
   const [busq,setBusq]=useState("");
   const [filtroEstado,setFiltroEstado]=useState("todos");
 
@@ -1489,7 +1578,7 @@ function PrestamosView(){
                         </td>
                         <td style={{padding:"10px 14px"}}>
                           <div style={{display:"flex",gap:6}}>
-                            <button onClick={()=>aprobarRenovacion(p.id)} style={{display:"flex",alignItems:"center",gap:5,padding:"6px 12px",borderRadius:7,border:"none",background:"#16A34A",color:"#fff",fontSize:12,fontWeight:500,cursor:"pointer"}}>
+                            <button onClick={()=>setPendingApproval(p)} style={{display:"flex",alignItems:"center",gap:5,padding:"6px 12px",borderRadius:7,border:"none",background:"#16A34A",color:"#fff",fontSize:12,fontWeight:500,cursor:"pointer"}}>
                               <CheckCircle size={12}/> Aprobar
                             </button>
                             <button onClick={()=>rechazarRenovacion(p.id)} style={{display:"flex",alignItems:"center",gap:5,padding:"6px 12px",borderRadius:7,border:"none",background:"#DC2626",color:"#fff",fontSize:12,fontWeight:500,cursor:"pointer"}}>
@@ -1552,22 +1641,75 @@ function PrestamosView(){
         </div>
       )}
 
-      {pendingNew&&<ConfirmPrestamoModal book={pendingNew.book} fechaDev={addDays(params.diasPrestamo)}
-        onConfirm={()=>{const ok=registrarPrestamo(pendingNew.book.id,pendingNew.userId);if(ok){setSelUser("");setSelBook("");}setPendingNew(null);}}
+      {pendingNew&&<ConfirmPrestamoModal book={pendingNew.book} fechaDev={addDays(params.diasPrestamo)} allowDateEdit={true}
+        onConfirm={(fechaElegida)=>{const ok=registrarPrestamo(pendingNew.book.id,pendingNew.userId,fechaElegida);if(ok){setSelUser("");setSelBook("");}setPendingNew(null);}}
         onCancel={()=>setPendingNew(null)}/>}
       {pendingDev&&<ConfirmDevolucionModal prestamo={pendingDev} onConfirm={()=>ejecutarDevolucion(pendingDev)} onCancel={()=>setPendingDev(null)}/>}
+      {pendingApproval&&<ApprovalDateModal
+        prestamo={pendingApproval}
+        defaultDias={params.diasPrestamo}
+        onConfirm={(fecha)=>{aprobarRenovacion(pendingApproval.id,fecha);setPendingApproval(null);}}
+        onCancel={()=>setPendingApproval(null)}/>}
     </div>
   );
 }
 
 function NotifCenterView(){
-  const {sysNotifs,enviarNotificacion}=useApp();
+  const {sysNotifs,enviarNotificacion,users}=useApp();
   const [sent,setSent]=useState(new Set());
+  const [manualUser,setManualUser]=useState("");
+  const [manualMsg,setManualMsg]=useState("");
+
+  const activeUsers=users.filter(u=>u.rol==="Usuario"&&u.estado==="activo");
+  const selUserObj=activeUsers.find(u=>u.usuario===manualUser);
+
+  const handleSendManual=()=>{
+    if(!selUserObj||!manualMsg.trim()) return;
+    enviarNotificacion(selUserObj.usuario,selUserObj.nombre,manualMsg.trim());
+    setManualMsg("");
+    setManualUser("");
+  };
+
   return(
     <div style={{padding:24,maxWidth:860}}>
       <SectionTitle icon={MessageSquare} label="Centro de notificaciones" count={sysNotifs.length}/>
+
+      {/* Envío manual de notificaciones */}
+      <Card style={{marginBottom:28,overflow:"visible"}}>
+        <div style={{padding:"16px 20px",borderBottom:"0.5px solid #E2E8F0",display:"flex",alignItems:"center",gap:8}}>
+          <Send size={15} color="#003366"/>
+          <h3 style={{margin:0,fontSize:14,fontWeight:500,color:"#1E293B"}}>Enviar notificación manual</h3>
+        </div>
+        <div style={{padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
+          <div>
+            <label style={{fontSize:12,color:"#64748B",display:"block",marginBottom:5,fontWeight:500}}>Destinatario</label>
+            <select value={manualUser} onChange={e=>setManualUser(e.target.value)} style={{width:"100%",boxSizing:"border-box"}}>
+              <option value="">— Seleccionar usuario —</option>
+              {activeUsers.map(u=><option key={u.id} value={u.usuario}>{u.nombre} (@{u.usuario})</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={{fontSize:12,color:"#64748B",display:"block",marginBottom:5,fontWeight:500}}>Mensaje</label>
+            <textarea value={manualMsg} onChange={e=>setManualMsg(e.target.value)} placeholder="Escribe el mensaje para el usuario…" rows={3}
+              style={{width:"100%",boxSizing:"border-box",resize:"vertical",padding:"9px 12px",borderRadius:8,border:"0.5px solid #E2E8F0",fontSize:13,fontFamily:"system-ui,sans-serif",color:"#1E293B",outline:"none"}}/>
+          </div>
+          <div style={{display:"flex",justifyContent:"flex-end"}}>
+            <button onClick={handleSendManual} disabled={!manualUser||!manualMsg.trim()}
+              style={{display:"flex",alignItems:"center",gap:6,padding:"9px 20px",borderRadius:8,border:"none",background:(!manualUser||!manualMsg.trim())?"#E2E8F0":"#003366",color:(!manualUser||!manualMsg.trim())?"#94A3B8":"#fff",cursor:(!manualUser||!manualMsg.trim())?"default":"pointer",fontSize:13,fontWeight:500}}>
+              <Send size={14}/> Enviar
+            </button>
+          </div>
+        </div>
+      </Card>
+
+      {/* Alertas automáticas del sistema */}
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
+        <AlertCircle size={15} color="#D97706"/>
+        <h3 style={{margin:0,fontSize:14,fontWeight:500,color:"#1E293B"}}>Alertas del sistema</h3>
+        {sysNotifs.length>0&&<span style={{background:"#FEF3C7",color:"#92400E",fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:99}}>{sysNotifs.length}</span>}
+      </div>
       {sysNotifs.length===0?(
-        <div style={{textAlign:"center",padding:"48px 0"}}>
+        <div style={{textAlign:"center",padding:"40px 0",background:"#fff",borderRadius:12,border:"0.5px solid #E2E8F0"}}>
           <CheckCircle size={40} color="#BBF7D0" style={{margin:"0 auto 12px"}}/>
           <p style={{fontSize:15,fontWeight:500,color:"#94A3B8",margin:"0 0 4px"}}>Todo en orden</p>
           <p style={{fontSize:13,color:"#CBD5E1",margin:0}}>No hay alertas activas.</p>
@@ -1663,16 +1805,83 @@ function ReportesView(){
   );
 }
 
-// ─── VIEWS: NIVEL 3 (Admin) ──────────────────────────────────
+// ─── VIEWS: NIVEL 2+ (Bibliotecario + Admin) ─────────────────
 function UsuariosView(){
-  const {users,addUser,updateUser,deleteUser,toggleUser}=useApp();
+  const {users,addUser,updateUser,deleteUser,toggleUser,effectiveRole,addToast}=useApp();
   const [modal,setModal]=useState(null);
   const [delTarget,setDelTarget]=useState(null);
   const [search,setSearch]=useState("");
-  const filtered=users.filter(u=>u.nombre.toLowerCase().includes(search.toLowerCase())||u.usuario.toLowerCase().includes(search.toLowerCase()));
+
+  const isBiblio = effectiveRole==="Bibliotecario";
+  const isAdmin  = effectiveRole==="Admin";
+
+  const pendingRequests = users.filter(u=>u.estado==="pendiente"&&u.rol==="Bibliotecario");
+
+  const visibleUsers = users.filter(u=>{
+    if(isBiblio) return u.rol==="Usuario"&&u.estado!=="pendiente";
+    return u.estado!=="pendiente";
+  });
+  const filtered=visibleUsers.filter(u=>u.nombre.toLowerCase().includes(search.toLowerCase())||u.usuario.toLowerCase().includes(search.toLowerCase()));
+
+  const handleApprove=(u)=>{
+    updateUser({...u,estado:"activo"});
+    addToast(`Cuenta de bibliotecario aprobada: ${u.nombre}`,"success");
+  };
+  const handleRejectRequest=(u)=>{ deleteUser(u.id); };
+
   return(
     <div style={{padding:24,maxWidth:960}}>
-      <SectionTitle icon={Users} label="Gestión de usuarios" count={users.length}/>
+      <SectionTitle icon={Users} label="Gestión de usuarios" count={visibleUsers.length}/>
+
+      {/* Solicitudes pendientes — solo Admin */}
+      {isAdmin&&pendingRequests.length>0&&(
+        <div style={{marginBottom:24}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+            <ShieldAlert size={16} color="#D97706"/>
+            <h3 style={{margin:0,fontSize:14,fontWeight:500,color:"#92400E"}}>Solicitudes de cuenta bibliotecario</h3>
+            <span style={{background:"#FEF9C3",color:"#713F12",fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:99}}>{pendingRequests.length}</span>
+          </div>
+          <Card>
+            <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+              <thead><tr style={{background:"#FFFBEB",borderBottom:"0.5px solid #FDE68A"}}>
+                {["Nombre","Usuario","Estado","Acciones"].map(h=>(
+                  <th key={h} style={{padding:"10px 16px",textAlign:"left",color:"#92400E",fontWeight:500}}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {pendingRequests.map(u=>(
+                  <tr key={u.id} style={{borderBottom:"0.5px solid #FEF3C7"}}>
+                    <td style={{padding:"10px 16px"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:10}}>
+                        <div style={{width:32,height:32,borderRadius:"50%",background:"#FFF3CD",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                          <span style={{fontSize:12,fontWeight:700,color:"#92400E"}}>{u.nombre.split(" ").map(n=>n[0]).join("").slice(0,2)}</span>
+                        </div>
+                        <span style={{fontWeight:500,color:"#1E293B"}}>{u.nombre}</span>
+                      </div>
+                    </td>
+                    <td style={{padding:"10px 16px",color:"#64748B",fontFamily:"monospace",fontSize:12}}>@{u.usuario}</td>
+                    <td style={{padding:"10px 16px"}}><Badge estado="pendiente"/></td>
+                    <td style={{padding:"10px 16px"}}>
+                      <div style={{display:"flex",gap:6}}>
+                        <button onClick={()=>handleApprove(u)} style={{display:"flex",alignItems:"center",gap:5,padding:"5px 12px",borderRadius:6,border:"none",background:"#DCFCE7",color:"#166534",fontSize:12,fontWeight:500,cursor:"pointer"}}>
+                          <CheckCircle size={13}/> Aprobar
+                        </button>
+                        <button onClick={()=>handleRejectRequest(u)} style={{display:"flex",alignItems:"center",gap:5,padding:"5px 12px",borderRadius:6,border:"none",background:"#FEE2E2",color:"#991B1B",fontSize:12,fontWeight:500,cursor:"pointer"}}>
+                          <X size={13}/> Rechazar
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* Tabla principal */}
       <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:10,marginBottom:14}}>
         <div style={{position:"relative",flex:"1 1 200px",maxWidth:300}}>
           <Search size={14} style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",color:"#94A3B8"}}/>
@@ -1691,6 +1900,7 @@ function UsuariosView(){
             ))}
           </tr></thead>
           <tbody>
+            {filtered.length===0&&<tr><td colSpan={5} style={{padding:20,textAlign:"center",color:"#94A3B8"}}>Sin usuarios registrados.</td></tr>}
             {filtered.map(u=>(
               <tr key={u.id} style={{borderBottom:"0.5px solid #F1F5F9",opacity:u.estado==="suspendido"?0.65:1}}>
                 <td style={{padding:"10px 16px"}}>
@@ -1724,7 +1934,7 @@ function UsuariosView(){
         </table>
         </div>
       </Card>
-      {modal!==null&&<UserModal initial={modal==="new"?null:modal} onClose={()=>setModal(null)} onSave={modal==="new"?addUser:updateUser}/>}
+      {modal!==null&&<UserModal initial={modal==="new"?null:modal} onClose={()=>setModal(null)} onSave={modal==="new"?addUser:updateUser} callerRole={effectiveRole}/>}
       {delTarget&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:300,padding:16}}>
           <div style={{background:"#fff",borderRadius:14,padding:28,maxWidth:420,width:"100%",boxShadow:"0 20px 48px rgba(0,0,0,0.18)"}}>
@@ -1756,6 +1966,8 @@ function UsuariosView(){
     </div>
   );
 }
+
+// ─── VIEWS: NIVEL 3 (Admin) ──────────────────────────────────
 
 function ParamsView(){
   const {params,updateParams,addToast}=useApp();
@@ -1844,9 +2056,10 @@ function LoginPanelLeft(){
 }
 
 function LoginForm(){
-  const {login,users,selfRegister,addToast}=useApp();
+  const {login,users,selfRegister,selfRegisterBibliotecario,addToast}=useApp();
   const isMobile=useIsMobile();
-  const [mode,setMode]=useState("login");
+  const [mode,setMode]=useState("login"); // "login" | "register"
+  const [tipo,setTipo]=useState("usuario"); // "usuario" | "bibliotecario"
   const [user,setUser]=useState("");const [pass,setPass]=useState("");const [error,setError]=useState("");
   const [rNombre,setRNombre]=useState("");const [rUsuario,setRUsuario]=useState("");
   const [rPass,setRPass]=useState("");const [rPass2,setRPass2]=useState("");
@@ -1858,9 +2071,18 @@ function LoginForm(){
   const strengthColor=["#E2E8F0","#DC2626","#D97706","#16A34A"][pwdStrength];
   const strengthLabel=["","Débil","Regular","Fuerte"][pwdStrength];
 
+  const resetRegisterForm=()=>{setRNombre("");setRUsuario("");setRPass("");setRPass2("");setRCarrera("");setRSubmit("");};
+
+  const switchMode=(m)=>{setMode(m);setError("");resetRegisterForm();setTipo("usuario");};
+  const switchTipo=(t)=>{setTipo(t);resetRegisterForm();};
+
   const handleLogin=()=>{
     const found=users.find(u=>u.usuario===user&&u.password===pass);
-    if(found){if(found.estado==="suspendido"){setError("Esta cuenta se encuentra suspendida.");return;}login({nombre:found.nombre,rol:found.rol,userId:found.usuario});}
+    if(found){
+      if(found.estado==="suspendido"){setError("Esta cuenta se encuentra suspendida.");return;}
+      if(found.estado==="pendiente"){setError("Tu solicitud de cuenta bibliotecaria está pendiente de aprobación por el administrador.");return;}
+      login({nombre:found.nombre,rol:found.rol,userId:found.usuario});
+    }
     else setError("Credenciales incorrectas. Por favor, intente nuevamente.");
   };
   const handleRegister=()=>{
@@ -1871,8 +2093,17 @@ function LoginForm(){
     const err=selfRegister({nombre:rNombre.trim(),usuario:rUsuario.trim(),password:rPass,carrera:rCarrera});
     if(err){setRSubmit(err);return;}
     addToast("Cuenta creada. Ya puedes iniciar sesión.","success");
-    setUser(rUsuario.trim());setPass("");setMode("login");
-    setRNombre("");setRUsuario("");setRPass("");setRPass2("");setRCarrera("");
+    setUser(rUsuario.trim());setPass("");switchMode("login");
+  };
+  const handleRegisterBiblio=()=>{
+    setRSubmit("");
+    if(!rNombre.trim()||!rUsuario.trim()||!rPass){setRSubmit("Completa todos los campos.");return;}
+    if(pwdErrors.length) return;
+    if(rPass!==rPass2){setRSubmit("Las contraseñas no coinciden.");return;}
+    const err=selfRegisterBibliotecario({nombre:rNombre.trim(),usuario:rUsuario.trim(),password:rPass});
+    if(err){setRSubmit(err);return;}
+    addToast("Solicitud enviada. El administrador revisará tu cuenta.","success");
+    setUser(rUsuario.trim());setPass("");switchMode("login");
   };
 
   return(
@@ -1896,26 +2127,43 @@ function LoginForm(){
                 {error&&<div style={{display:"flex",alignItems:"center",gap:8,background:"#FEF2F2",border:"0.5px solid #FECACA",borderRadius:8,padding:"10px 12px"}}><AlertCircle size={14} color="#DC2626" style={{flexShrink:0}}/><p style={{margin:0,fontSize:12,color:"#DC2626"}}>{error}</p></div>}
                 <button onClick={handleLogin} style={{padding:"11px 0",borderRadius:8,background:"#003366",color:"#fff",border:"none",fontWeight:500,fontSize:14,cursor:"pointer"}}>Ingresar</button>
               </div>
-              <p style={{margin:"22px 0 0",fontSize:13,color:"#94A3B8",textAlign:"center"}}>¿No tienes cuenta?{" "}<button onClick={()=>{setMode("register");setError("");}} style={{background:"none",border:"none",color:"#003366",fontWeight:500,fontSize:13,cursor:"pointer",padding:0,textDecoration:"underline"}}>Regístrate aquí</button></p>
+              <p style={{margin:"22px 0 0",fontSize:13,color:"#94A3B8",textAlign:"center"}}>¿No tienes cuenta?{" "}<button onClick={()=>switchMode("register")} style={{background:"none",border:"none",color:"#003366",fontWeight:500,fontSize:13,cursor:"pointer",padding:0,textDecoration:"underline"}}>Regístrate aquí</button></p>
               <p style={{margin:"14px 0 0",fontSize:11,color:"#CBD5E1",textAlign:"center"}}>Sistema restringido a personal y usuarios autorizados de DUOC UC.</p>
             </>
           )}
           {mode==="register"&&(
             <>
               <h1 style={{margin:"0 0 5px",fontSize:20,fontWeight:500,color:"#1E293B"}}>Crear cuenta</h1>
-              <p style={{margin:"0 0 22px",fontSize:13,color:"#94A3B8"}}>Tu cuenta tendrá acceso de Usuario al sistema.</p>
+              <p style={{margin:"0 0 14px",fontSize:13,color:"#94A3B8"}}>Selecciona el tipo de cuenta que deseas crear.</p>
+              {/* Selector de tipo */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:18}}>
+                <button onClick={()=>switchTipo("usuario")} style={{padding:"10px 8px",borderRadius:8,fontSize:12,fontWeight:500,cursor:"pointer",border:tipo==="usuario"?"2px solid #003366":"0.5px solid #E2E8F0",background:tipo==="usuario"?"#EFF6FF":"#fff",color:tipo==="usuario"?"#003366":"#64748B",display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+                  <User size={16}/><span>Estudiante</span>
+                </button>
+                <button onClick={()=>switchTipo("bibliotecario")} style={{padding:"10px 8px",borderRadius:8,fontSize:12,fontWeight:500,cursor:"pointer",border:tipo==="bibliotecario"?"2px solid #92400E":"0.5px solid #E2E8F0",background:tipo==="bibliotecario"?"#FFFBEB":"#fff",color:tipo==="bibliotecario"?"#92400E":"#64748B",display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+                  <ShieldAlert size={16}/><span>Bibliotecario</span>
+                </button>
+              </div>
+              {tipo==="bibliotecario"&&(
+                <div style={{display:"flex",alignItems:"flex-start",gap:8,background:"#FFFBEB",border:"0.5px solid #FDE68A",borderRadius:8,padding:"10px 12px",marginBottom:14}}>
+                  <AlertTriangle size={14} color="#D97706" style={{flexShrink:0,marginTop:1}}/>
+                  <p style={{margin:0,fontSize:12,color:"#92400E",lineHeight:1.5}}>Tu cuenta quedará <strong>pendiente de aprobación</strong> por el administrador antes de poder iniciar sesión.</p>
+                </div>
+              )}
               <div style={{display:"flex",flexDirection:"column",gap:13}}>
                 <div>
                   <label style={{fontSize:13,color:"#475569",display:"block",marginBottom:5,fontWeight:500}}>Nombre completo *</label>
                   <input value={rNombre} onChange={e=>setRNombre(e.target.value)} placeholder="Ej: Ana Torres" style={{width:"100%",boxSizing:"border-box"}}/>
                 </div>
-                <div>
-                  <label style={{fontSize:13,color:"#475569",display:"block",marginBottom:5,fontWeight:500}}>Carrera</label>
-                  <select value={rCarrera} onChange={e=>setRCarrera(e.target.value)} style={{width:"100%",boxSizing:"border-box",fontSize:13,borderRadius:8,padding:"9px 10px",border:"0.5px solid #E2E8F0",background:"#fff",color:"#475569"}}>
-                    <option value="">Sin especificar</option>
-                    {CARRERAS.map(c=><option key={c}>{c}</option>)}
-                  </select>
-                </div>
+                {tipo==="usuario"&&(
+                  <div>
+                    <label style={{fontSize:13,color:"#475569",display:"block",marginBottom:5,fontWeight:500}}>Carrera</label>
+                    <select value={rCarrera} onChange={e=>setRCarrera(e.target.value)} style={{width:"100%",boxSizing:"border-box",fontSize:13,borderRadius:8,padding:"9px 10px",border:"0.5px solid #E2E8F0",background:"#fff",color:"#475569"}}>
+                      <option value="">Sin especificar</option>
+                      {CARRERAS.map(c=><option key={c}>{c}</option>)}
+                    </select>
+                  </div>
+                )}
                 <div>
                   <label style={{fontSize:13,color:"#475569",display:"block",marginBottom:5,fontWeight:500}}>Usuario *</label>
                   <input value={rUsuario} onChange={e=>setRUsuario(e.target.value.toLowerCase().replace(/\s/g,""))} placeholder="Ej: ana.torres" style={{width:"100%",boxSizing:"border-box"}}/>
@@ -1947,9 +2195,11 @@ function LoginForm(){
                   {rPass2&&rPass!==rPass2&&<p style={{margin:"4px 0 0",fontSize:11,color:"#DC2626"}}>Las contraseñas no coinciden.</p>}
                 </div>
                 {rSubmit&&<div style={{display:"flex",alignItems:"center",gap:8,background:"#FEF2F2",border:"0.5px solid #FECACA",borderRadius:8,padding:"10px 12px"}}><AlertCircle size={14} color="#DC2626" style={{flexShrink:0}}/><p style={{margin:0,fontSize:12,color:"#DC2626"}}>{rSubmit}</p></div>}
-                <button onClick={handleRegister} style={{padding:"11px 0",borderRadius:8,background:"#003366",color:"#fff",border:"none",fontWeight:500,fontSize:14,cursor:"pointer",marginTop:2}}>Crear cuenta</button>
+                <button onClick={tipo==="bibliotecario"?handleRegisterBiblio:handleRegister} style={{padding:"11px 0",borderRadius:8,background:tipo==="bibliotecario"?"#92400E":"#003366",color:"#fff",border:"none",fontWeight:500,fontSize:14,cursor:"pointer",marginTop:2}}>
+                  {tipo==="bibliotecario"?"Enviar solicitud":"Crear cuenta"}
+                </button>
               </div>
-              <p style={{margin:"18px 0 0",fontSize:13,color:"#94A3B8",textAlign:"center"}}>¿Ya tienes cuenta?{" "}<button onClick={()=>{setMode("login");setRSubmit("");}} style={{background:"none",border:"none",color:"#003366",fontWeight:500,fontSize:13,cursor:"pointer",padding:0,textDecoration:"underline"}}>Inicia sesión</button></p>
+              <p style={{margin:"18px 0 0",fontSize:13,color:"#94A3B8",textAlign:"center"}}>¿Ya tienes cuenta?{" "}<button onClick={()=>switchMode("login")} style={{background:"none",border:"none",color:"#003366",fontWeight:500,fontSize:13,cursor:"pointer",padding:0,textDecoration:"underline"}}>Inicia sesión</button></p>
             </>
           )}
         </div>
@@ -1967,7 +2217,7 @@ const SECTION_LABELS = {
 };
 
 function MainLayout({sidebarOpen=false,setSidebarOpen=()=>{}}:{sidebarOpen?: boolean; setSidebarOpen?: any}){
-  const {session,effectiveRole,misActivos,sysNotifs,misNotificaciones}=useApp();
+  const {session,effectiveRole,misActivos,sysNotifs,misNotificaciones,users}=useApp();
   const defaultTab=useMemo(()=>{
     if(hasLevel(effectiveRole,"Admin")) return "reportes";
     if(hasLevel(effectiveRole,"Bibliotecario")) return "inventario";
@@ -1980,7 +2230,8 @@ function MainLayout({sidebarOpen=false,setSidebarOpen=()=>{}}:{sidebarOpen?: boo
   const activos=misActivos(userId);
   const personal=misNotificaciones(userId).length;
   const enMora=activos.filter(p=>isOver(p.fechaDevolucion)).length;
-  const badge={notificaciones:sysNotifs.length,misprestamos:activos.length};
+  const pendingBiblios=session?.rol==="Admin"?users.filter(u=>u.estado==="pendiente"&&u.rol==="Bibliotecario").length:0;
+  const badge={notificaciones:sysNotifs.length,misprestamos:activos.length,usuarios:pendingBiblios};
 
   return(
     <div style={{display:"flex"}}>
@@ -2006,8 +2257,8 @@ function MainLayout({sidebarOpen=false,setSidebarOpen=()=>{}}:{sidebarOpen?: boo
           {activeTab==="notificaciones" &&<NotifCenterView/>}
           {activeTab==="reportes"       &&<ReportesView/>}
         </>}
+        {hasLevel(effectiveRole,"Bibliotecario")&&activeTab==="usuarios"&&<UsuariosView/>}
         {hasLevel(effectiveRole,"Admin")&&<>
-          {activeTab==="usuarios"  &&<UsuariosView/>}
           {activeTab==="params"    &&<ParamsView/>}
           {activeTab==="auditoria" &&<AuditoriaView/>}
         </>}
